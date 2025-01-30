@@ -3,6 +3,7 @@ from bleak import BleakScanner
 import signal
 import sys
 import platform
+from datetime import datetime
 
 # Configuration
 TARGET_DEVICE_NAME = "diagnostic"  # Change this to match your device name
@@ -22,26 +23,50 @@ async def scan_for_devices():
     global scanning
     while scanning:
         try:
-            devices = await BleakScanner.discover(timeout=5.0)
+            current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"\n[{current_time}] Scanning...")
+            
+            devices = await BleakScanner.discover(timeout=5.0, return_adv=True)
             
             found_devices = False
-            for device in devices:
-                if device.name and TARGET_DEVICE_NAME.lower() in device.name.lower():
-                    found_devices = True
-                    print("\nFound matching device:")
-                    print(f"Name: {device.name}")
-                    print(f"Address: {device.address}")
-                    print(f"RSSI: {device.rssi} dBm")
-                    print(f"Details: {device.details}")
-                    print("-" * 50)
+            
+            for device, adv_data in devices.items():
+                try:
+                    device_name = None
+                    rssi = None
+                    
+                    # Handle macOS specific case where adv_data is a tuple
+                    if isinstance(adv_data, tuple) and len(adv_data) == 2:
+                        ble_device, advertisement = adv_data
+                        device_name = advertisement.local_name
+                        rssi = advertisement.rssi
+                    else:
+                        # Linux/other platforms
+                        if hasattr(adv_data, 'local_name'):
+                            device_name = adv_data.local_name
+                        if hasattr(adv_data, 'rssi'):
+                            rssi = adv_data.rssi
+                    
+                    # If we found a name and it matches our target
+                    if device_name and TARGET_DEVICE_NAME.lower() in str(device_name).lower():
+                        found_devices = True
+                        print("\nFound matching device:")
+                        print(f"Name: {device_name}")
+                        print(f"Address: {device}")  # device is the address on macOS
+                        if rssi is not None:
+                            print(f"RSSI: {rssi} dBm")
+                        print("-" * 50)
+                
+                except Exception as device_error:
+                    print(f"Error processing device: {device_error}")
+                    continue
             
             if not found_devices:
-                print(f"\nNo '{TARGET_DEVICE_NAME}' devices found in this scan")
+                print(f"No '{TARGET_DEVICE_NAME}' devices found in this scan")
                 print("-" * 50)
 
         except Exception as e:
             print(f"Scan error: {e}")
-            # If we get a permission error, provide platform-specific guidance
             if "permission" in str(e).lower():
                 if platform.system() == "Darwin":  # macOS
                     print("On macOS, ensure Bluetooth is enabled and the app has Bluetooth permissions")
@@ -52,7 +77,6 @@ async def scan_for_devices():
 
 async def main():
     try:
-        # Set up signal handlers for graceful exit
         if platform.system() != "Windows":  # Unix-like systems (macOS, Linux)
             loop = asyncio.get_event_loop()
             loop.add_signal_handler(signal.SIGINT, signal_handler, signal.SIGINT, None)
@@ -62,7 +86,6 @@ async def main():
     except Exception as e:
         print(f"Error: {e}")
     finally:
-        # Ensure clean shutdown
         if platform.system() != "Windows":
             loop = asyncio.get_event_loop()
             loop.remove_signal_handler(signal.SIGINT)
